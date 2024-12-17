@@ -1,0 +1,12 @@
+{
+  "name": "Manshawar的blog",
+  "start_url": ".",
+  "display": "standalone",
+  "icons": [
+    {
+      "src": "/rspress-icon.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}

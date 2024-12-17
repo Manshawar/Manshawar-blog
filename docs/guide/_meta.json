@@ -1,0 +1,73 @@
+[
+  {
+    "type": "section-header",
+    "label": "Introduce"
+  },
+  {
+    "type": "file",
+    "name": "index",
+    "label": "Hi,欢迎来到我的blog"
+  },
+  {
+    "type": "divider"
+  },
+  {
+    "type": "section-header",
+    "label": "前端炒粉"
+  },
+  {
+    "type": "dir",
+    "name": "vite",
+    "label": "vite从入门到放弃"
+  },
+  {
+    "type": "dir",
+    "name": "rust",
+    "label": "rust狗都不用",
+    "collapsible": "true"
+  },
+  {
+    "type": "divider"
+  },
+  {
+    "type": "dir",
+    "name": "vue",
+    "label": "vue在线讨口子",
+    "collapsible": "true",
+    "overviewHeaders": [
+      2
+    ]
+  },
+  {
+    "type": "divider"
+  },
+  {
+    "type": "dir",
+    "name": "js",
+    "label": "js拿去通马桶真是个好东西",
+    "collapsible": "true"
+  },
+  {
+    "type": "divider"
+  },
+  {
+    "type": "dir",
+    "name": "electron",
+    "label": "electron让你的pc成为垃圾站",
+    "collapsible": "true"
+  },
+  {
+    "type": "divider"
+  },
+  {
+    "type": "dir",
+    "name": "css",
+    "label": "css切图仔来啦",
+    "collapsible": "true"
+  },
+  {
+    "type": "section-header",
+    "label": "会server的能去贴膜了"
+  },
+  "serve/sql/sql.md"
+]

@@ -1,0 +1,653 @@
+# 从 koa 到 mini-vite（一）预构建
+
+### 1、vite 的本质是什么
+
+<p>vite实质上来讲，它是一个node资源服务器，通过搭建mini-vite，我深入的认识到了这点，vite整体的流程就是通过对引入包扫描的预构建，配合插件容器对于预构建资源的处理，最后通过ws和依赖收集，来实现热更新。说实在点就是你想服务器发送请求，他处理js文件返回给你，让你的浏览器能识别，既然是服务器，那我们就可以使用任何的node框架进行搭建；</p>
+
+这个是仓库地址
+
+[![Readme Card](https://github-readme-stats.vercel.app/api/pin/?username=Manshawar&repo=koa_vite)](https://github.com/Manshawar/koa_vite)
+### 2、项目的技术选型
+
+koa+ts+esbuild+fs-extra
+
+此项目使用 tsx 运行
+
+- tsx 拥有自带的 watch 模式，非常好用
+- ts-node 给我了很多麻烦，因为他会在 commomJs 和 module 模块混用的时候出问题
+- ts-node 的 issue 有人推荐 tsx😏
+
+为什么选择 koa，无他，因为他足够简单，可以直接上手使用。选择用 typescript 进行开发，因为 ts 的好处就在于，我们可以知道引入的包有哪些方法，更加便于我们书写方法，同时减少代码出 bugger 的可能性。
+
+使用 koa 搭建这个项目，这个项目只是一个学习项目，并不是一个具备高可用性的项目，优先级是以如何最容易看懂来实现的，所以 koa 搭建的这个服务器并不会进行任何的打包，如果想体验打包后的产物，建议可以使用一下 tsup，俺实力优先，现阶段没法手写 bundle 就不考虑一切打包相关的东西了。
+
+再次叠甲。这个项目不是那么严谨的，高可用的，这个项目主要目的一是帮助穷哥们叩开工程化的门缝(就这三脚猫功夫，我觉得不能称之为大门🥹)。其次是对自己这段时间的脚手架学习给一个交代，我认为有输入了，还是要有点输出，更能巩固知识点，其次这也是一个备忘录
+
+以下是 package.json 文件，如果有哥们想实现的话可以复制一下。
+
+```json
+{
+  "dependencies": {
+    "@types/connect": "^3.4.38",
+    "@types/debug": "^4.1.12",
+    "@types/fs-extra": "^11.0.4",
+    "@types/resolve": "^1.20.6",
+    "@types/ws": "^8.5.13",
+    "cac": "^6.7.14",
+    "chokidar": "^4.0.1",
+    "connect": "^3.7.0",
+    "cross-env": "^7.0.3",
+    "debug": "^4.3.7",
+    "es-module-lexer": "^1.5.4",
+    "esbuild": "^0.24.0",
+    "fs-extra": "^11.2.0",
+    "koa": "^2.15.3",
+    "magic-string": "^0.30.13",
+    "picocolors": "^1.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "resolve": "^1.22.8",
+    "rollup": "^4.27.3",
+    "sirv": "^3.0.0",
+    "tsup": "^8.3.5",
+    "ws": "^8.18.0"
+  },
+
+  "scripts": {
+    "dev": "cross-env NODE_ENV=dev tsx watch ./src/index.ts  "
+  },
+  "devDependencies": {
+    "@types/koa": "^2.15.0",
+    "@types/node": "^22.9.1",
+    "file-loader": "^6.2.0"
+  }
+}
+```
+
+### 3、使用 koa 搭建一个服务器
+
+```ts
+import Koa from "koa";
+const app = new Koa();
+//import { optimize } from "./node/optimizer";
+//const root = process.cwd()
+app.use(ctx => {
+  ctx.body = "hello Koa";
+});
+app.listen(3000, async () => {
+  //await optimize(root)
+  console.log("http://localhost:3000 ");
+});
+```
+
+嗯....，这是个有手就行的工作，不会有人不会吧，不会吧，不会吧，能看到 hello koa 就算成功
+### 4、从zhangsan文件开始，理解何为资源服务器
+
+我们来看这段代码
+
+```ts
+import fs from "fs-extra";
+import path from "path";
+
+app.use(async (ctx, next) => {
+  const { req, res } = ctx;
+
+  if (req.url?.endsWith(".zhangsan") || (req.url === "/zhangsan"&&req.method === "GET")) {
+    const realPath = path.join(process.cwd(), req.url + (req.url === "/zhangsan" ? ".html" : ""));
+    if (await fs.pathExists(realPath)) {
+      const code = await fs.readFile(realPath, "utf-8");
+      res.statusCode = 200;
+      req.url === "/zhangsan" ? res.setHeader("Content-Type", "text/html") : res.setHeader("Content-Type", "application/javascript");
+      
+      res.end(code)
+    }
+  }
+  return next()
+})
+
+```
+这是一个中间件，他的主要功能就是解析后缀为.zhangsan的文件，同时 再路由导航到zhangsan路由的时候，会读取根目录下的zhangsan.html文件，然后我们通过readFile读取文件，将其返回的content-type，改为html，我们的浏览器就可以读取这个页面了
+
+这里是zhangsan.html 他在根目录下；
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+
+<body>
+  <div id="zhangsan"></div>
+  <script type="module" src="src/node/zhangsan/1.zhangsan"></script>
+</body>
+
+</html>
+
+
+```
+当这段代码被浏览器读取后，他的script标签会向我们的服务器发送请求，这个请求url是`src/node/zhangsan/1.zhangsan`，我们的服务器能直接拦截到后缀为`.zhangsan`的请求 见代码`req.url?.endsWith(".zhangsan") `,然后我们验证这个地址是否存在，如果存在，就使用utf-8的格式去读取他，返回时将响应头设置为js，我们的浏览器就会去执行他，这是我们的zhangsan文件
+```js
+//src/node/zhangsan/1.zhangsan
+import a from "./a.zhangsan";
+document.getElementById("zhangsan").innerHTML = "zhangsan";
+console.log(a)
+
+```
+甚至他还支持模块化；
+```js
+//src/node/zhangsan/a.zhangsan
+export default {
+  a:1
+}
+
+```
+你可以看到页面
+
+<img src="/vite/koa_vite/zhangsan.png" />
+
+你可以通过network查看我们的请求
+<img src="/vite/koa_vite/zhangsannet.png" />
+
+你现在应该了解到一点教授架的基础了，接下来开始上车了哦😚；不了解也没关系，可以去隔壁的cyber脚手架，一个中间件，带你过完react或者vue执行的一生，只不过是朋克风，青春版的而已😏
+这里是掘金地址
+
+
+
+### 5、进行依赖的预构建
+
+提问：为什么要进行依赖的预构建。
+
+当然是对于外部引入的资源进行处理，node_modules 里的包，vite 是不会直接引用的，会先进行依赖扫描，将我们安装的一些包如 vue,react,element 等，这种外部资源包通过 esbuild 进行编译，形成一个.vite 的缓存文件。后续钩子的处理都是从.vite 中提取的资源,按照工地的话讲，这是打灰。😎
+
+#### 5-1、为什么要进一步的处理
+
+如下图：
+
+<div style={{ display: "flex", gap: "10px" }}>
+  <img width="50%" src="/vite/koa_vite/react.png" />
+  <img width="50%" src="/vite/koa_vite/vue.png" />
+</div>
+我们可以看到,无论是react还是vue,他们打包后的产物都是通过**commonjs**进行的,也就是说,我们是无法在浏览器中直接执行的,所以需要做一次**转换**。其原因是它们的生态系统中很多**库和工具是基于
+Node.js 构建**的。因此，这些库和工具通常会以 **CommonJS 格式**发布，以便于在 **Node.js环境中使用。**,而且，我们需要更快的构建速度，而读取缓存则是常用的方法。** 而且最重要的是，我翻遍了react和react-dom的所有包，它默认没有es模块的包，直接使用`import React from "react"`是根本用不了的😒;  **
+
+#### 5-2、打开你的 node_modules 包，找到.vite 文件
+
+有没有发现你的 node_modules 包，vite 项目中有一个.vite 的文件，你删除了你的项目就 G 了 😏，得重新进行 build，这是为什么呢？;让我们来看看.vite 包是由什么构成的
+
+<img src="/vite/koa_vite/.vite.png" />
+
+你会发现，包里会存在似曾相识的包的名字，因为在依赖预构建阶段，**vite 会将 bare import 的路径视作第三方包，**，**使用 esbuild 打包**，**将其缓存到.vite 文件，这也是 vite 高性能的由来，** **vite 是 esbuild 和 rollup 双引擎，rollup 为主体，esbuild 相当于一个催化剂**； 
+
+这是 vite 的双引擎流程图，请关注于左边的开发阶段，当前的工作就是 pre-bundle，使用 esbuild 进行依赖预构建
+
+<img src="/vite/koa_vite/esbuild&esbuild.png" />
+
+> bare import 是什么：在 JavaScript 模块系统中，"bare import"（裸导入）是指在 import 语句中直接使用一个模块的名称，而不是一个完整的 URL 或相对路径
+
+通俗的讲，将我们要用的依赖包通过 esbuild 转化为缓存，用来提升构建速度，减少性能消耗，这个是有意义的，后续我们对于bare裸引入处理的时候，如import React from "react"，我们会直接将路径改写至.vite路径中，直接读取打包好的代码
+
+#### 5-3、开始书写 esbuild 构建代码
+
+这里是入口文件的代码 index.ts，其中的optimizer是进行预构建的函数
+
+```ts
+import Koa from "koa";
+const app = new Koa();
+import { optimize } from "./node/optimizer";
+const root = process.cwd();
+app.use(ctx => {
+  ctx.body = "hello Koa";
+});
+app.listen(3000, async () => {
+  await optimize(root);
+  console.log("http://localhost:3000 ");
+});
+```
+
+我们来康康 optimizer 文件是怎么个事
+
+```ts
+import path from "path";
+import { build } from "esbuild";
+import { scanPlugin } from "./scanplugin";
+import { preBundlePlugin } from "./preBundlePlugin";
+import { PRE_BUNDLE_DIR } from "../contants"; //path.join("node_modules", ".m-vite")
+export async function optimize(root: string) {
+  // 1. 确定入口
+  // 2. 从入口处扫描依赖
+  // 3. 预构建依赖;
+  const deps = new Set<string>();
+  const entry = path.resolve(root, "src/client/main.tsx");
+  await build({
+    entryPoints: [entry],
+    bundle: true,
+    write: false,
+    plugins: [scanPlugin(deps)],
+  });
+  await build({
+    entryPoints: [...deps],
+    write: true,
+    bundle: true,
+    format: "esm",
+    splitting: true,
+    outdir: path.resolve(root, PRE_BUNDLE_DIR), //这个合成路径是 process.cwd() + "/node_modules/.m-vite"
+    plugins: [preBundlePlugin(deps)],
+  });
+  console.log("需要构建的依赖项", deps);
+}
+```
+
+我们开始分析这个代码做了哪些事情 😏
+
+build 是调用 esbuild 的build，里面的选项都解释一下 
+- entryPoints：是指入口文件 
+ - bundle：使用脚本打包，我们使用的 esbuild 的 api，所以我们需要设置为 true
+  - write: 是否写入文件， 
+  - plugins: 插件，这里面有 scanPlugin 和 preBundlePlugin， 
+  - format : 打包的格式，我们打包的是 esmodule，所以设置为 esm 
+  - splitting: 是否拆分打包，我们选择拆分，拆分后代码块更小，速度会提升一些 
+  - outdir：打包后输出的目录
+
+预构建为什么是两次build
+
+1.第一次build不进行打包，快速的将其依赖项过滤出来
+2.第二次build专门对第一次过滤出来的依赖项进行打包，我们就可以得到所有的外部依赖想的包
+
+通俗的讲就是第一个build就是lol的选择英雄，第二部就是选择天赋 召唤师技能全部带好，准备进入召唤师峡谷大杀四方 😏
+
+上面两个插件会在下面单独解析，先给大家说说是干嘛的，
+
+- scanPlugin 做的事情是扫描依赖，将 bare import 进行收集 将他放到**deps 的 Set 集合**中;
+- preBundlePlugin 的作用是，将收集到的依赖进行预构建，将结果**写入到.vite 文件夹**中，同时**返回一个 map，这个 map 中包含了所有的依赖的绝对路径**，后面会用到。导出规范是 esmodule 模块。并且我们会对其的导出进行重写，**将 commomjs 模块重写为大家熟知的 esmodule 模块**
+
+
+这两个插件跑完后，我们的预构建基本就完成了
+
+#### 5-3-1、先来看看 sanPlugin 的代码
+
+在两个插件中，我们涉及到最基础的两个函数，**resolveId**和**load**，他们是 esbuild 插件的基本钩子
+
+- onResolve：在模块路径被解析之前调用，用于修改或重定向模块路径。
+- onLoad：在模块路径确定后调用，用于读取或生成模块内容。
+  在写的时候我们需要注意一点，resolve 中的返回值至关重要，我们需要返回原来的路径，以保证我们能够继续进行下去
+  以下是 scanPlugin 插件的代码
+
+```ts
+// node/contants.ts
+export const EXTERNAL_TYPES = [
+  "css",
+  "less",
+  "sass",
+  "scss",
+  "styl",
+  "stylus",
+  "pcss",
+  "postcss",
+  "vue",
+  "svelte",
+  "marko",
+  "astro",
+  "png",
+  "jpe?g",
+  "gif",
+  "svg",
+  "ico",
+  "webp",
+  "avif",
+];
+export const BARE_IMPORT_RE = /^[\w@][^:]/;
+//optimizer/scanPlugin.ts
+import { Plugin } from "esbuild";
+import { BARE_IMPORT_RE, EXTERNAL_TYPES } from "../contants";
+export function scanPlugin(deps: Set<string>): Plugin {
+  return {
+    name: "scan-deps",
+    setup(build) {
+      build.onResolve({ filter: new RegExp(`\\.(${EXTERNAL_TYPES.join("|")})$`) }, resolveInfo => {
+        return {
+          path: resolveInfo.path,
+          // 打上 external 标记
+          external: true,
+        };
+      });
+      build.onResolve(
+        {
+          filter: BARE_IMPORT_RE,
+        },
+        resolveInfo => {
+          deps.add(resolveInfo.path);
+          return {
+            path: resolveInfo.path,
+            external: true,
+          };
+        }
+      );
+    },
+  };
+}
+```
+
+build.onResolve 钩子，在解析路径之前调用，返回一个对象，onResolve 中的 filter 选项是一个过滤器，会根据正则进行过滤
+
+第一个钩子中 我们过滤掉了无关的资源，他是将 EXTERNAL_TYPES 数组中所有相关的后缀名全部过滤掉， 返回值是一个对象，我们需要返回 path，这个 path 是必传的
+
+> path 字段用于唯一标识一个模块。esbuild 需要一个明确的路径来确定模块的身份，以便在后续的构建过程中正确地处理和引用该模块。
+
+> external 字段，外部资源不需要 esbuild 对其进行处理
+
+我们在这两个钩子中，第一个钩子的任务是排除不必要资源，便于下面的钩子能够更好的解析生成依赖，第二个钩子是过滤出 条件为`/^[\w@][^:]/`的依赖。`第一个字符必须是字母、数字、下划线 (_) 或者 @。这由 [\\w@] 部分表示`,`第二个字符不能是冒号 (:)。这由 [^:] 部分表示`，将`bare import`全部收集到我们依赖集合中。
+
+#### 5-3-2、再来看看 preBundlePlugin 的代码
+
+这位更是重量级，上强度了哦 🥵,我已经汗流浃背了。
+
+```ts
+//optimizer/preBundlePlugin.ts
+import { Loader, Plugin } from "esbuild";
+import { BARE_IMPORT_RE } from "../contants";
+import { init, parse } from "es-module-lexer";
+import path from "path";
+import resolve from "resolve";
+import fs from "fs-extra";
+import { pathToFileURL } from "url"
+import createDebug from "debug";
+import { normalizePath } from "../utils";
+const debug = createDebug("dev");
+export function preBundlePlugin(deps: Set<string>): Plugin {
+  return {
+    name: "esbuild:pre-bundle",
+    setup(build) {
+
+      build.onResolve(
+        {
+          filter: BARE_IMPORT_RE,
+        },
+        (resolveInfo) => {
+
+          const { path: id, importer } = resolveInfo;
+          const isEntry = !importer;
+          // 命中需要预编译的依赖;
+
+          if (deps.has(id)) {
+
+            // console.log("id", id, isEntry, importer)
+            // 若为入口，则标记 dep 的 namespace
+
+            return isEntry
+              ? {
+                path: id,
+                namespace: "dep",
+              }
+              : {
+                // 因为走到 onResolve 了，所以这里的 path 就是绝对路径了
+                path: resolve.sync(id, { basedir: process.cwd() }),
+              };
+          }
+        }
+      );
+      build.onLoad({
+        filter: /.*/,
+        namespace: "dep"
+      }, async (loadInfo) => {
+        await init;
+        const id = loadInfo.path;
+
+        const root = process.cwd();
+        const entryPath = normalizePath(resolve.sync(id, { basedir: root }));
+
+        const code = await fs.readFile(entryPath, "utf-8");
+        // console.log("path-------", entryPath,)
+        const [imports, exports] = await parse(code);
+        // console.log("imports, exports", imports, exports)
+        let proxyModule = [];
+        let relativePath = normalizePath(path.relative(root, entryPath))
+        if (
+          !relativePath.startsWith('./') &&
+          !relativePath.startsWith('../') &&
+          relativePath !== '.'
+        ) {
+          relativePath = `./${relativePath}`
+        }
+
+        //进行词法解析，将所有require的文件方法提取出来转为es虚拟模块暴露 
+        if (!imports.length && !exports.length) {
+          let res = await import(pathToFileURL(entryPath).toString());
+          const specifiers = Object.keys(res);
+          proxyModule.push(
+            `export { ${specifiers.join(",")} } from "${relativePath}"`,
+            // `export default import("${relativePath}")`
+          );
+        } else {
+          if ((exports as any).includes("default")) {
+            proxyModule.push(`import d from "${entryPath}";export default d`);
+          }
+          proxyModule.push(`export * from "${relativePath}"`);
+        }
+
+
+        debug("代理模块内容: %o", proxyModule.join("\n"));
+        const loader = path.extname(entryPath).slice(1);
+        // console.log("resolveDir----------", root, proxyModule)
+        // console.log("proxyModule----------", proxyModule)
+        return {
+          loader: loader as Loader,
+          contents: proxyModule.join("\n"),
+          resolveDir: root,
+        }
+      })
+      build.onStart(() => {
+        console.log('build started')
+      })
+    }
+  }
+}
+```
+
+我们将其分成两块来看 🫠
+
+在 onResolve 中，我们继续沿用上一次进行依赖收集的条件，其实进行依赖收集也是为了能更快的找到依赖，**esbuild 在不打包的情况下，速度远快于需要打包的情况**。让我们来康康，他是如何进行精准命中的
+
+第一步，确定入口模块 👻
+一般来说，包里面对其没有引用，我们一般就可以**确认他是入口模块，isEntry 为 true 的话，我们会让他在 onLoad 中进行进一步处理**。如果为 false，则返回其路径为绝对路径。
+我们来看看当他为 false 时的情况
+
+```js
+resolveInfo = {
+  path: "react",
+  importer:
+    "D:\\code\\study\\vite\\minivite\\koaVite\\node_modules\\.pnpm\\react-dom@18.3.1_react@18.3.1\\node_modules\\react-dom\\cjs\\react-dom.development.js",
+  namespace: "file",
+  resolveDir:
+    "D:\\code\\study\\vite\\minivite\\koaVite\\node_modules\\.pnpm\\react-dom@18.3.1_react@18.3.1\\node_modules\\react-dom\\cjs",
+  kind: "require-call",
+  pluginData: undefined,
+  with: {},
+};
+```
+
+这个是他的 resolveInfo，我们可以看到，他是在 react-dom 中使用的 react 包，我们是不需要将其进行处理的，我们原本已经处理好了一个模块了，这里我们**只需要将他的路径返回为我们当前包的路径即可**,使用他的时候会在后续的插件容器中进行处理，我们的插件最终会在.m-vite中去读取bare包
+
+第二步，对于入口文件进行重写 💀
+上述满足条件的会标记为 dep 命名空间，我们可以直接在**只用相同的命名空间获取上文中过滤出来的模块**。
+`es-module-lexer`这个包是用于对路径依赖进行分析的，我们**await init 实际上就相当于将其处于了 init.then()的环境下**，我们从 loadInfo 中获取当前路径的 id ，然后**使用 resolve.sync 和 normalizePath,将其转换为可用的路径**
+
+```ts
+export function normalizePath(id: string): string {
+  return path.posix.normalize(isWindows ? slash(id) : id);
+}
+```
+
+这个方法只是帮我们适配 windows 系统的路径，resolve.sync 是**将如`react`这种路径，拼接成绝对路径**,resolve 是帮助我们从当前根路径下寻找可用的路径。他们会将 id 为`react`,转化为`"D:/code/study/vite/minivite/koaVite/node_modules/react/index.js"`这样的路径
+
+`await parse(code)`，解析当前路径是否存在**引入和导出**，`proxyModule`此数组用来收集**依赖**，`relativePath`则是将路径转化为`"./node_modules/react-dom/index.js"`这种相对路径，下面的 if 处理也是用于帮助转换为相对路径的。
+
+```ts
+await init;
+const id = loadInfo.path;
+
+const root = process.cwd();
+const entryPath = normalizePath(resolve.sync(id, { basedir: root }));
+
+const code = await fs.readFile(entryPath, "utf-8");
+// console.log("path-------", entryPath,)
+const [imports, exports] = await parse(code);
+// console.log("imports, exports", imports, exports)
+let proxyModule = [];
+let relativePath = normalizePath(path.relative(root, entryPath));
+if (!relativePath.startsWith("./") && !relativePath.startsWith("../") && relativePath !== ".") {
+  relativePath = `./${relativePath}`;
+}
+```
+
+我们开始处理是否存在 esmodule 依赖了,`if (!imports.length && !exports.length) `这里的处理是**判断我们是否存在有 es 模块构筑的包**，如果不存在，我们需要将 commonjs 的模块转换为 esmodule 的模块，我们**通过 import 先获取对应文件的导出模块**，我们的入口文件主要功能就是暴露模块，我们只需要关注暴露了哪些模块就好了，最后会**将同一个命名空间下不同的导出模块汇总到一起，形成一个数组**;
+
+> import异步方法可以直接将require的模块变成es模块，非常好用，我们需要注意的是使用pathToFileURL 这个node原生的方法，将其路径变化为文件路径
+
+```ts
+//进行词法解析，将所有require的文件方法提取出来转为es虚拟模块暴露
+if (!imports.length && !exports.length) {
+  const res = require(entryPath);
+
+  const specifiers = Object.keys(res);
+  // console.log("res----", entryPath, res)
+  proxyModule.push(
+    `export { ${specifiers.join(",")} } from "${relativePath}"`,
+    `export default require("${relativePath}")`
+  );
+} else {
+  if ((exports as any).includes("default")) {
+    proxyModule.push(`import d from "${entryPath}";export default d`);
+  }
+  proxyModule.push(`export * from "${relativePath}"`);
+}
+```
+
+我们的 else，则是存在 esmodule 模块时的操作，我们只需要，判断是否有默认暴露，有的话就补上，在分别暴露的情况下也只需要使用通配符就可以暴露所有模块，非常方便
+
+为什么要这么处理呢
+
+对于 CommonJS 格式的依赖，单纯用 export default require('入口路径') 是有局限性的，比如对于 React 而言，用这样的方式生成的产物最后只有 default 导出:
+
+```ts
+export default react_default;
+```
+
+那么用户在使用这个依赖的时候，必须这么使用:
+
+```ts
+// ✅ 正确
+import React from "react";
+const { useState } = React;
+// ❌ 报错
+import { useState } from "react";
+```
+
+最后,返回一个对象，loader 这里是'js'，将我们的内容打包为 js，` proxyModule.join("\n")`将收集的依赖数组转化为内容，代替原本的内容进行打包，resolveDir 则是我们当前根目录
+
+```ts
+const loader = path.extname(entryPath).slice(1);
+// console.log("resolveDir----------", root, proxyModule)
+// console.log("proxyModule----------", proxyModule)
+return {
+  loader: loader as Loader,
+  contents: proxyModule.join("\n"),
+  resolveDir: root,
+};
+```
+
+下面则是我们打包的结果
+
+```js
+// dep:react
+var import_react = __toESM(require_react());
+var export_Children = import_react.Children;
+var export_Component = import_react.Component;
+var export_Fragment = import_react.Fragment;
+var export_Profiler = import_react.Profiler;
+var export_PureComponent = import_react.PureComponent;
+var export_StrictMode = import_react.StrictMode;
+var export_Suspense = import_react.Suspense;
+var export___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = import_react.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
+var export_act = import_react.act;
+var export_cloneElement = import_react.cloneElement;
+var export_createContext = import_react.createContext;
+var export_createElement = import_react.createElement;
+var export_createFactory = import_react.createFactory;
+var export_createRef = import_react.createRef;
+var export_default = import_react.default;
+var export_forwardRef = import_react.forwardRef;
+var export_isValidElement = import_react.isValidElement;
+var export_lazy = import_react.lazy;
+var export_memo = import_react.memo;
+var export_startTransition = import_react.startTransition;
+var export_unstable_act = import_react.unstable_act;
+var export_useCallback = import_react.useCallback;
+var export_useContext = import_react.useContext;
+var export_useDebugValue = import_react.useDebugValue;
+var export_useDeferredValue = import_react.useDeferredValue;
+var export_useEffect = import_react.useEffect;
+var export_useId = import_react.useId;
+var export_useImperativeHandle = import_react.useImperativeHandle;
+var export_useInsertionEffect = import_react.useInsertionEffect;
+var export_useLayoutEffect = import_react.useLayoutEffect;
+var export_useMemo = import_react.useMemo;
+var export_useReducer = import_react.useReducer;
+var export_useRef = import_react.useRef;
+var export_useState = import_react.useState;
+var export_useSyncExternalStore = import_react.useSyncExternalStore;
+var export_useTransition = import_react.useTransition;
+var export_version = import_react.version;
+export {
+  export_Children as Children,
+  export_Component as Component,
+  export_Fragment as Fragment,
+  export_Profiler as Profiler,
+  export_PureComponent as PureComponent,
+  export_StrictMode as StrictMode,
+  export_Suspense as Suspense,
+  export___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED as __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED,
+  export_act as act,
+  export_cloneElement as cloneElement,
+  export_createContext as createContext,
+  export_createElement as createElement,
+  export_createFactory as createFactory,
+  export_createRef as createRef,
+  export_default as default,
+  export_forwardRef as forwardRef,
+  export_isValidElement as isValidElement,
+  export_lazy as lazy,
+  export_memo as memo,
+  export_startTransition as startTransition,
+  export_unstable_act as unstable_act,
+  export_useCallback as useCallback,
+  export_useContext as useContext,
+  export_useDebugValue as useDebugValue,
+  export_useDeferredValue as useDeferredValue,
+  export_useEffect as useEffect,
+  export_useId as useId,
+  export_useImperativeHandle as useImperativeHandle,
+  export_useInsertionEffect as useInsertionEffect,
+  export_useLayoutEffect as useLayoutEffect,
+  export_useMemo as useMemo,
+  export_useReducer as useReducer,
+  export_useRef as useRef,
+  export_useState as useState,
+  export_useSyncExternalStore as useSyncExternalStore,
+  export_useTransition as useTransition,
+  export_version as version
+};
+
+```
+
+export*useRef 中间加一个*代表之前是 commomjs 的模块，现在变成 esmodule 的模块，所以需要加一个\_,到这里，我们的依赖预构建终于完成了；
+
+参考：
+
+<a href="https://s.juejin.cn/ds/iDy3m2f9/">深入浅出vite</a>
+
+
+大家可以去学一学这个，此项目的灵感来源，也是带我进入了工程化的大门

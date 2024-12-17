@@ -1,0 +1,780 @@
+# 从 koa 到 mini-vite（三）资源处理及模块依赖和热更新
+
+这个是仓库地址
+
+[![Readme Card](https://github-readme-stats.vercel.app/api/pin/?username=Manshawar&repo=koa_vite)](https://github.com/Manshawar/koa_vite)
+
+### 1、处理图片资源的路径
+
+我们先对资源路径进行处理，不过`react`和`vue`的资源处理大有不同，我们这里先论证`react`，你可以从`cyber`文件中看到`vue`是如何处理的；
+
+```ts
+//..........
+import koaStatic from "koa-static";
+//..........
+const serverContext: ServerContext = {
+  root: process.cwd(),
+  PluginContainer,
+  app,
+  plugins: plugins,
+  moduleGraph,
+  ws,
+  clientPath,
+  watcher,
+};
+bindingHMREvents(serverContext);
+app.use(koaStatic(path.join(process.cwd(), "/src/client/")));
+for (const plugin of plugins) {
+  if (plugin.configureServer) {
+    await plugin.configureServer(serverContext);
+  }
+}
+app.use(indexHtmlMiddware(serverContext));
+app.use(transformMiddleware(serverContext));
+//..........
+```
+
+我们这边使用`koa-static`静态资源包对其客户端文件进行代理`/src/client/`;
+
+`react`的资源处理就完成了，但是也是有其局限性的，无法对其**相对路径**进行处理。我在`cyber.ts`中，写了一个简单的 demo，使其`vue`实现了对相对路径的处理，你可以参考一下。
+
+我简单的介绍一下 vue 我是如何处理的；
+
+1. 我通过观察得到，在`vue/compiler-sfc`的处理中，会将`src`请求的`url`，转换为`import`路径，然后使用虚拟`node`，对其进行处理，见图
+   <img src="/vite/cyber/pngDeal.png" />
+2. 解析出来的路径是一个`import`，我们通过`resolve`方法将其路径改写为基于服务器的绝对路径
+3. 我们的图片可不能使用`import`引入，我们暴露一个虚拟模块
+4. 改写路径时在后面加上一个`?import`符号
+5. 在引入时，我们解析此路径，返回`code`为
+
+```js
+export default "src/cyber/components/171536_380.png";
+```
+
+这样我们就能引入图片，并实现引入图片的懒加载了。
+
+### 2、处理 Svg 资源
+
+对于 svg 资源的处理，我在这里书写了一个`plugin`,在书写一个程序前，确立两点有助于帮助我们快速的实现
+
+1. 确定输入的是什么
+2. 确定输出的是什么
+
+实际上也就是确定`I/O`;
+我们来看看，我们需要怎么去实现一个 svg 的处理,先看需求代码
+
+```tsx
+import "./App.css";
+import React from "react";
+import logo from "./logo.svg";
+// import logo from "./logo.svg";
+function App() {
+  return (
+    <div className="App">
+      <header className="App-header">
+        <p>dsdsHell ssf sadsf</p>
+        <p></p>
+        <img src="/public/OIP-C.jpg" alt="" />
+        <p>
+          ds<code>sdssdafsssfadsa</code> sans save es tsest.
+        </p>
+        <img className="App-logo" src={logo} alt="" />
+        <p></p>
+      </header>
+    </div>
+  );
+}
+```
+
+我们可以清晰的看到，我们的 src 值是引入的`logo`，`src`接受的是地址，我们需要处理的是将 logo 转化为`export default 真实路径`；而`vite`插件中，`load`钩子是返回`code`的，我们就在此处做文章
+
+```ts
+import { Plugin } from "./plugin";
+import { ServerContext } from "../../index";
+import { cleanUrl, getShortName, normalizePath, removeImportQuery } from "../utils";
+import path from "path";
+export function assetPlugin(): Plugin {
+  let serverContext: ServerContext;
+
+  return {
+    name: "m-vite:asset",
+    configureServer(s) {
+      serverContext = s;
+    },
+    async load(id) {
+      const cleanedId = removeImportQuery(cleanUrl(id));
+      const resolvedId = `/${path
+        .relative(path.join(serverContext.root, "/src/client/"), cleanedId)
+        .replaceAll("\\", "/")}`;
+
+      if (cleanedId.endsWith(".svg")) {
+        return {
+          code: `export default "${resolvedId}"`,
+        };
+      }
+    },
+  };
+}
+```
+
+我们在 load 中将传入的`id`，由经`resolve`的处理，我们的`id`是绝对路径，能读取到位置的绝对路径，后续再使用`path.relative`，将路径做相对路径处理，这样我们就能得到相对于当前文件的位置，因为我们在前文`koa-static`代理的路径是`/src/client/`,所以我们需要在此处进行一下处理
+
+### 3、css 处理
+
+我们`css`的处理用一个`plugin`,我们来确定一下思路，我们的目的是将`import "./index.css";`转化为浏览器可读的`style`样式；我们来梳理一下处理思路；
+
+1. 将 css 文本进行读取
+2. 使用 style 标签注入 css
+3. 将 style 标签注入`html`
+
+这里是`css`plugin 代码，后续会为了热更新我们会进行进一步的改善
+
+```ts
+// plugins/css.ts
+import { readFile } from "fs-extra";
+import { Plugin } from "../plugin";
+
+export function cssPlugin(): Plugin {
+  return {
+    name: "m-vite:css",
+    load(id) {
+      // 加载
+      if (id.endsWith(".css")) {
+        return readFile(id, "utf-8");
+      }
+    },
+    // 转换逻辑
+    async transform(code, id) {
+      if (id.endsWith(".css")) {
+        // 包装成 JS 模块
+        const jsContent = `
+const css = "${code.replace(/\n/g, "")}";
+const style = document.createElement("style");
+style.setAttribute("type", "text/css");
+style.innerHTML = css;
+document.head.appendChild(style);
+export default css;
+`.trim();
+        return {
+          code: jsContent,
+        };
+      }
+      return null;
+    },
+  };
+}
+```
+
+### 4、依赖图谱
+
+依赖图谱主要有以下几个作用
+
+1. 构建依赖关系
+2. 进行缓存
+3. 热更新的索引映射
+
+我们来确定一下，我们的依赖图谱每一个节点需要的是哪些参数，这里提供一个`class`，我们来进行参考
+
+```ts
+export class ModuleNode {
+  // 资源访问 url
+  url: string;
+  // 资源绝对路径
+  id: string | null = null;
+  importers = new Set<ModuleNode>();
+  importedModules = new Set<ModuleNode>();
+  transformResult: TransformResult | null = null;
+  lastHMRTimestamp = 0;
+  constructor(url: string) {
+    this.url = url;
+  }
+}
+```
+
+我们可以看到，一个 moduleNode 类，需要的是
+
+- `url`请求连接
+- `id`模块的绝对路径
+- `importers`引入者(该`id`被谁引入)
+- `importedModules`被引入者(该`id`引入了哪些模块)
+- `transformResult`代码片段
+- `lastHMRTimestamp`时间戳，用于判断是否需要重新编译
+
+此类，在后续的生成中，我们命名为`mod`节点,我们从`url`到`importAnalysis`中间件，来看看他是如何处理的
+
+首先，我们从 url 的中间件开始
+
+<img src="/vite/koa_vite/中间件流程图.png" />
+
+这里有张流程图，我们的代码处理如下
+
+```ts
+//src\node\middlewares\transformMiddleware.ts
+//........
+async function transformRequest(url: string, serverContext: ServerContext) {
+  const { PluginContainer, moduleGraph } = serverContext;
+  let query = url.split("?")[1];
+
+  url = cleanUrl(url);
+
+  let mod = await moduleGraph.getModuleByUrl(url);
+  if (mod && mod.transformResult && !query) {
+    return mod.transformResult;
+  }
+  let res;
+  let resolveId = await PluginContainer.resolveId(url);
+  if (resolveId?.id) {
+    let code = await PluginContainer.load(resolveId?.id);
+    if (typeof code === "object" && code !== null) {
+      code = code.code;
+    }
+
+    mod = await moduleGraph.ensureEntryFromUrl(url);
+    if (code) {
+      res = await PluginContainer.transform(code, resolveId?.id);
+    }
+    if (mod) {
+      mod.transformResult = res;
+    }
+  }
+  return res;
+}
+//........
+```
+
+我们的`moduleGraph`对象会一点一点的进行介绍，一下子说完会感觉有点乱，
+我们来看看，他这里调用的`getModuleByUrl`方法是什么
+
+```ts
+//src\node\ModuleGraph.ts
+//moduleGraph.getModuleByUrl(url);
+export class ModuleGraph {
+  urlToModuleMap = new Map<string, ModuleNode>();
+  idToModuleMap = new Map<string, ModuleNode>();
+  constructor(private resolveId: (url: string) => Promise<PartialResolvedId | null>) {}
+  getModuleById(url: string): ModuleNode | undefined {
+    return this.idToModuleMap.get(url);
+  }
+  async getModuleByUrl(rawUrl: string): Promise<ModuleNode | undefined> {
+    const { url } = await this._resolve(rawUrl);
+    return this.urlToModuleMap.get(cleanUrl(url));
+  }
+  async ensureEntryFromUrl(rawUrl: string): Promise<ModuleNode | undefined> {
+    const { url, resolvedId } = await this._resolve(rawUrl);
+    if (this.urlToModuleMap.has(url)) {
+      return this.urlToModuleMap.get(url) as ModuleNode;
+    }
+    const mod = new ModuleNode(url);
+    mod.id = resolvedId;
+    this.urlToModuleMap.set(url, mod);
+    this.idToModuleMap.set(resolvedId, mod);
+    return mod;
+  }
+}
+
+//src\index.ts
+const moduleGraph = new ModuleGraph(url => PluginContainer.resolveId(url));
+```
+
+这个类的`constructor`的参数传入的是插件容器定义的 resolveId 路径解析方法
+他会帮助我们解析路径，返回由插件容器解析的路径；
+
+- `getModuleById` 通过 id 寻找模块
+- `getModuleByUrl` 通过 url 转换成 id 寻找模块
+- `ensureEntryFromUrl` 通过 url 转换成 id 寻找模块，如果存在则获取模块，如果不存在，则创建一个模块，并添加到模块依赖的缓存中
+
+我们从流程图上来看：
+
+1. 判断是否存在于模块依赖的缓存中
+2. 如果存在，则从缓存中提取模块依赖（不会再重复相同的文件进行重复读写，esbuild 进行读写和修改 import 引入是及其`heavy`）
+3. 如果不存在，则再`load`后，使用`ensureEntryFromUrl`判断是否存在该缓存，如果存在则获取模块，如果不存在，则创建一个模块，并添加到模块依赖的缓存中
+4. 对于转换好的`code`，则写入缓存中
+
+`importAnalysis`预设进行依赖收集
+
+```ts
+// src\node\plugins\importAnalysis.ts
+
+//.....length
+async transform(code, id) {
+      const { moduleGraph } = serverContext;
+      const curmod = moduleGraph.getModuleById(id)!;
+      const importedModules = new Set<string>();
+      //....
+        for (const importInfo of imports) {
+        const { s: modStart, e: modEnd, n: modSource } = importInfo;
+        if (!modSource) continue;
+        //....
+        if (BARE_IMPORT_RE.test(modSource as string)) {
+          const bundlePath = normalizePath(
+            path.join('/', PRE_BUNDLE_DIR, `${modSource}.js`)
+          );
+          importedModules.add(bundlePath);
+
+          ms.overwrite(modStart, modEnd, bundlePath as string)
+        } else if (modSource.startsWith(".") || modSource.startsWith("/")) {
+        //....
+          if (resolved) {
+            ms.overwrite(modStart, modEnd, resolved);
+            importedModules.add(resolved);
+          }
+        }
+      };
+      //....
+      moduleGraph.updataModuleInfo(curmod, importedModules);
+        return {
+        code: ms.toString(),
+        map: ms.generateMap()
+      }
+}
+
+
+```
+
+<img src="/vite/koa_vite/importAnalysis依赖分析.png" />
+我们跟着流程图看 
+1. 通过`getModuleById`获取前文的`mod模块` 
+2. 在`imports`的依赖分析中收集子模块数组 
+3. 使用`moduleGraph.updataModuleInfo`方法对依赖进行标记 
+4. 确保依赖是否存在，如果存在则获取，不存在则新建，并将依赖写入map中
+5. 在当前`mod`上写入`dep`作为`importedModules`
+6. 在`dep`上写入引入`mod`作为源头`importers`
+7. 该`mod`上一次的`importedModules`是否存在于当前传入的模块数组中，如果不存在，则删除
+
+```ts
+export class ModuleGraph {
+  urlToModuleMap = new Map<string, ModuleNode>();
+  idToModuleMap = new Map<string, ModuleNode>();
+  //....
+
+  async updateModuleInfo(mod: ModuleNode, importedModules: Set<string | ModuleNode>) {
+    const prevImports = mod.importedModules;
+    for (const curImports of importedModules) {
+      const dep =
+        typeof curImports === "string"
+          ? await this.ensureEntryFromUrl(cleanUrl(curImports))
+          : curImports;
+      if (dep) {
+        mod.importedModules.add(dep);
+        dep.importers.add(mod);
+      }
+    }
+    // 清除已经不再被引用的依赖
+    for (const prevImport of prevImports) {
+      if (!importedModules.has(prevImport.url)) {
+        prevImport.importers.delete(mod);
+      }
+    }
+  }
+}
+//....
+```
+这里是完整的ModuleGraph代码，可以参考一下，具体更改的文件过多，请于仓库中查看
+```ts
+import { PartialResolvedId, TransformResult } from "rollup";
+import { cleanUrl } from "./utils";
+import { debug } from "console";
+import { getboundaries } from "./plugins/hmr/boundaries"
+export class ModuleNode {
+  url: string = "";
+  id: string = "";
+  importers = new Set<ModuleNode>();
+  importedModules = new Set<ModuleNode>();
+  transformResult: TransformResult | null = null;
+  lastHMRTimetamp = 0;
+  constructor(url: string) {
+    this.url = url
+  }
+};
+export class ModuleGraph {
+  urlToModuleMap = new Map<string, ModuleNode>();
+  idToModuleMap = new Map<string, ModuleNode>();
+  constructor(private resolveId: (url: string) => Promise<PartialResolvedId | null>) { };
+  getModuleById(url: string): ModuleNode | undefined {
+    return this.idToModuleMap.get(url)
+  }
+  async getModuleByUrl(rawUrl: string): Promise<ModuleNode | undefined> {
+    const { url } = await this._resolve(rawUrl);
+    return this.urlToModuleMap.get(cleanUrl(url))
+  }
+  async ensureEntryFromUrl(rawUrl: string): Promise<ModuleNode | undefined> {
+
+    const { url, resolvedId } = await this._resolve(rawUrl);
+    if (this.urlToModuleMap.has(url)) {
+      return this.urlToModuleMap.get(url) as ModuleNode
+    }
+    const mod = new ModuleNode(url);
+    mod.id = resolvedId;
+    this.urlToModuleMap.set(url, mod);
+    this.idToModuleMap.set(resolvedId, mod)
+    return mod;
+  };
+  async updataModuleInfo(mod: ModuleNode, importedModules: Set<string | ModuleNode>) {
+    const prevImports = mod.importedModules;
+
+    for (const curImports of importedModules) {
+
+
+      const dep = typeof curImports === "string" ? await this.ensureEntryFromUrl(cleanUrl(curImports)) : curImports;
+      if (dep) {
+
+        mod.importedModules.add(dep);
+        dep.importers.add(mod);
+      }
+    }
+    for (const preImport of prevImports) {
+      // console.log(importedModules.has(preImport.url as string))
+      if (!importedModules.has(preImport.url as string)) {
+        preImport.importers.delete(mod)
+      }
+    }
+  };
+  invalidateModule(file: string) {
+    const mod = this.idToModuleMap.get(file);
+    if (mod) {
+      mod.lastHMRTimetamp = Date.now();
+      mod.transformResult = null;
+      mod.importers.forEach((importer) => {
+        this.invalidateModule(importer.id!)
+      })
+    }
+  }
+  private async _resolve(url: string): Promise<{ url: string, resolvedId: string }> {
+    const resolved = await this.resolveId(url);
+    const resolvedId = resolved?.id as string;
+    return { url, resolvedId }
+  }
+  getboundaries(url: string) {
+    let curmod = this.urlToModuleMap.get(url)!;
+
+    return Array.from(getboundaries(curmod, new Set()))
+  }
+}
+
+```
+
+### 5、热更新
+
+热更新这里还有一些问题值得思考，我会带大家实现一个无状态保留的热更新，具体的热更新政策，我们还是需要去读react或者vue的热更新源码，这里就不做详细介绍。
+我们来确定，热更新需要的一些物料
+1. 使用`ws`像客户端传递信息
+2. 使用`chokidar`监听文件更新
+
+热更新整体流程图如下
+<img src="/vite/koa_vite/hmr大纲.png" />
+
+```ts
+//src\index.ts
+const watcher = chokidar.watch(clientPath, {
+  ignored: [/node_modules/, /\.git/],
+  ignoreInitial: true
+});
+const ws = createWebSocketServer(app);
+const serverContext: ServerContext = {
+  root: process.cwd(),
+  PluginContainer,
+  app,
+  plugins: plugins,
+  moduleGraph,
+  ws,
+  clientPath,
+  watcher
+};
+bindingHMREvents(serverContext)
+```
+我们先来看看`webSokect`
+```ts
+//src\node\ModuleGraph.ts
+import { WebSocketServer, WebSocket } from "ws";
+import { HMR_PORT } from "./contants";
+import color from "picocolors";
+export function createWebSocketServer(server: any): { send: (msg: string) => void; close: () => void } {
+  let wss: WebSocketServer;
+  wss = new WebSocketServer({ port: HMR_PORT });
+  wss.on("connection", (socket) => {
+    socket.send(JSON.stringify({ type: "connected" }))
+  });
+  wss.on("error", (e: Error & { code: string }) => {
+    if (e.code !== "EADDRINUSE") {
+      console.error(color.red(`WebSocket server error:\n${e.stack || e.message}`))
+    }
+  })
+  return {
+    send(payload: Object) {
+      const stringified = JSON.stringify(payload);
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(stringified)
+        }
+      })
+    },
+    close() { 
+      wss.close()
+    }
+  }
+}
+
+```
+这是封装的一个websocket服务,他会返回一个对象，这个对象可以向我们的服务端广播更新的信息，我们只需要调用这个对象的send方法即可
+
+再来看看`hmr`的代码
+
+```ts
+import { ServerContext } from './../index';
+import picocolors from "picocolors";
+import { getShortName } from "./utils";
+export function bindingHMREvents(serverContext: ServerContext) {
+  const { watcher, ws, root } = serverContext;
+  watcher.on("change", async (file) => {
+    console.log(`✨${picocolors.blue("[hmr]")} ${picocolors.green(file)} changed`);
+    const { moduleGraph } = serverContext;
+    await moduleGraph.invalidateModule(file);
+    let arr = moduleGraph.getboundaries("/" + getShortName(file, root)).map(item => ({
+      type: "js-update",
+      timeStamp: Date.now(),
+      path: item,
+      acceptedPath: item
+    }))
+    ws.send({
+      type: "update",
+      updates: arr,
+    })
+  })
+}
+```
+这里是监听文件变化，如果文件发送变化，则使用`ws`发动更新信息，通知客户端，这里有个边界寻找方法`moduleGraph.getboundaries("/" + getShortName(file, root))`这个方法会帮助我们找到所有的依赖此文件的父级。
+
+这是一个虚拟模块，它会将`src\node\plugins\hmr\client.ts`中的代码注入到客户端中
+
+```ts
+//src\node\plugins\clientInject.ts
+import { CLIENT_PUBLIC_PATH, HMR_PORT } from "../contants";
+import { Plugin } from "./plugin";
+import fs from "fs-extra";
+import esbuild from "esbuild"
+import path from "path";
+import { ServerContext } from "../../index";
+function clientInjectPlugin(): Plugin {
+  let serverContext: ServerContext;
+  return {
+    name: "m-vite:client-inject",
+    configureServer(s) {
+      serverContext = s
+    },
+    resolveId(id) {
+      if (id === CLIENT_PUBLIC_PATH) {
+        return { id }
+      }
+      return null
+    },
+    async load(id) {
+      if (id === CLIENT_PUBLIC_PATH) {
+
+        let realpath = path.join(import.meta.dirname, "hmr", "client.ts");
+        let { code } = await esbuild.transform(await fs.readFile(realpath, "utf-8"), {
+          loader: "ts",
+          target: "esnext"
+        })
+        code = code.replace("__HMR_PORT__", JSON.stringify(HMR_PORT));
+        return code
+      }
+
+    },
+    transformIndexHtml(raw) {
+      return raw.replace(/(<head[^>]*>)/i, `$1<script type="module" src="${CLIENT_PUBLIC_PATH}"></script>`)
+    }
+  }
+}
+export { clientInjectPlugin }
+
+```
+与此同时，`src\node\plugins\importAnalysis.ts`中也要修改一下`code`，方便客户端使用。
+
+```ts
+      if (!id.includes("node_modules")) {
+        let res = Array.from(getboundaries(curmod, new Set()));
+        ms.prepend(`import { createHotContext as __vite__createHotContext } from "${CLIENT_PUBLIC_PATH}";` + `import.meta.hot = __vite__createHotContext(${JSON.stringify(cleanUrl(curmod.url))},${JSON.stringify(res)});`)
+      }
+
+
+```
+
+
+这里我们建立websocket的链接，一旦我们接受到服务器的信息，就会执行`handleMessage`方法；
+```ts
+const socket = new WebSocket(`ws://localhost:__HMR_PORT__`, "vite-hmr");
+let boundaries: any;
+socket.addEventListener("message", async ({ data }) => {
+
+  handleMessage(JSON.parse(data)).catch(console.error)
+});
+```
+
+
+```ts
+async function handleMessage(payload: any) {
+  switch (payload.type) {
+    case "connection":
+      console.log(`[vite] connected.`);
+      setInterval(() => socket.send("ping"), 1000);
+      break;
+    case "update":
+      console.log(payload.updates)
+      payload.updates.forEach((update: any) => {
+        if (update.type === "js-update") {
+          fetchUpdate(update)
+        }
+      })
+      break;
+  }
+}
+
+```
+我们会使用心跳检测，去判断是否能链接上服务器，如果能链接上，则会发送一个心跳包
+如果是服务端发送的更新请求，则会调用`fetchUpdate`方法对依赖进行重新拉取
+```ts
+async function fetchUpdate({ path, timeStamp }: any) {
+  // console.log(path)
+  const mod = hotModulesMap.get(path);
+  console.log(boundaries, "mod---------------------", path)
+  if (!mod) return;
+  const moduleMap = new Map();
+  const modulesToUpdate = new Set<string>();
+  modulesToUpdate.add(path);
+  // boundaries.forEach((item:string) => {
+  //   modulesToUpdate.add(item);
+  // })
+  await Promise.all(Array.from(modulesToUpdate).map(async (dep) => {
+    const [path, query] = dep.split("?");
+
+    try {
+      const newMod = await import(path + `?t=${timeStamp}${query ? `&${query}` : ""}`);
+      moduleMap.set(dep, newMod)
+    } catch (e) {
+      console.error(e)
+    }
+  }))
+  return () => {
+    for (const { deps, fn } of mod.callbacks) {
+      fn(deps.map(dep => moduleMap.get(dep)));
+      console.log(`[vite] hot updated: ${path}`);
+    }
+  }
+}
+
+```
+这里我们就将更新过的`mod`信息，通过`fetchUpdate`方法，重新加载模块，然后执行回调函数，实现热更新。
+
+我们css的热更新也是这个方式，只不过我们是在更新的时候重新读取css文件，将文件写入style标签中，每一次更新 则是委托客户端重新引入新的css`content`文件；
+
+我们的热更新也就初步实现了
+
+但我们还有以下几个问题
+1. 写入`import.meta.hot`上面的方法，对齐热更新依赖图谱
+2. 这个热更新是摧毁式的热更新，我们该怎么处理
+
+
+我在这里抛砖引玉，这也就是剩下的一部分工作了，我先提几个点，日后有时间会续写上去的。
+
+### 5.1、探讨如何写入import.meta.hot方法和其作用
+```ts
+      if (!id.includes("node_modules")) {
+        let res = Array.from(getboundaries(curmod, new Set()));
+        ms.prepend(`import { createHotContext as __vite__createHotContext } from "${CLIENT_PUBLIC_PATH}";` + `import.meta.hot = __vite__createHotContext(${JSON.stringify(cleanUrl(curmod.url))},${JSON.stringify(res)});`)
+      }
+
+```
+这里个方法主要目的是接受服务端的`mod`信息，构建热更新环境
+```ts
+export const createHotContext = (ownerPath: string, arr: any) => {
+
+  boundaries = arr;
+  const mod: HotModule = hotModulesMap.get(ownerPath) || {
+    id: ownerPath,
+    callbacks: []
+  };
+  hotModulesMap.set(ownerPath, mod)
+
+  if (mod) {
+    mod.callbacks = []
+  }
+  function acceptDeps(deps: string[], callback: any) {
+
+    const mod: HotModule = hotModulesMap.get(ownerPath) || {
+      id: ownerPath,
+      callbacks: []
+    };
+    mod.callbacks.push({ deps, fn: callback });
+    hotModulesMap.set(ownerPath, mod)
+  }
+  return {
+    accept(deps: any, callback?: any) {
+
+      if (typeof deps === "function" || !deps) {
+        //@ts-ignore
+        acceptDeps([ownerPath], ([mod]) => deps && deps(mod))
+      }
+    },
+    prune(cb: (data: any) => void) {
+      pruneMap.set(ownerPath, cb)
+    }
+  }
+}
+
+```
+我们这里会对依赖进行收集，但这个代码并不能使用来实现毫秒级的保留状态的热更新，我们在acceptDeps方法中，并没有实现提取该依赖更新的`deps`，我们提取`deps`后，需要重新的根据`deps`引入新的代码块，来实现重新渲染，之前使用的方法则是不管其他，我们将所有相关的文件重新拉去，这里则是需要进行细化的地方，比如寻找热更新的边界，如何确定`热更新`最大影响的区域。确定后我们需要重新的对`deps`进行拉去，需要由一定的`vue-hmr`和`react-hmr`插件的支持，我们要将发送过来的`code`文本，进行重新的渲染；
+
+#### 5.2、探讨如何寻找热更新边界
+
+第二个难点是如何去进行热更新边界的判断，在`vite`源码中，是通过`propagateUpdate`这个方法递归往上查找的，如果往上查找到了热更新边界则会退出，如果没查到则会一直查下去，直到没有为止，这个代码改写难度太大了，希望各位有更好的方法融入
+
+```ts
+// 热更新边界收集
+function propagateUpdate(
+  node: ModuleNode,
+  boundaries: Set<{
+    boundary: ModuleNode
+    acceptedVia: ModuleNode
+  }>,
+  currentChain: ModuleNode[] = [node]
+): boolean {
+   // 接受自身模块更新
+   if (node.isSelfAccepting) {
+    boundaries.add({
+      boundary: node,
+      acceptedVia: node
+    })
+    return false
+  }
+  // 入口模块
+  if (!node.importers.size) {
+    return true
+  }
+  // 遍历引用方
+  for (const importer of node.importers) {
+    const subChain = currentChain.concat(importer)
+    // 如果某个引用方模块接受了当前模块的更新
+    // 那么将这个引用方模块作为热更新的边界
+    if (importer.acceptedHmrDeps.has(node)) {
+      boundaries.add({
+        boundary: importer,
+        acceptedVia: node
+      })
+      continue
+    }
+
+    if (currentChain.includes(importer)) {
+      // 出现循环依赖，需要强制刷新页面
+      return true
+    }
+    // 递归向更上层的引用方寻找热更新边界
+    if (propagateUpdate(importer, boundaries, subChain)) {
+      return true
+    }
+  }
+  return false
+}
+
+```
+
+

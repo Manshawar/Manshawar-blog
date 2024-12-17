@@ -1,0 +1,630 @@
+# 从 koa 到 mini-vite（二）插件容器
+
+
+这个是仓库地址
+
+[![Readme Card](https://github-readme-stats.vercel.app/api/pin/?username=Manshawar&repo=koa_vite)](https://github.com/Manshawar/koa_vite)
+
+### 1、什么是插件容器
+
+vite 的插件容器是使用的管线设计模式，其设计参考了 rollup 的插件机制
+
+- 在生产环境中 Vite 直接调用 Rollup 进行打包，所以 Rollup 可以调度各种插件；
+- 在开发环境中，Vite 模拟了 Rollup 的插件机制，设计了一个 PluginContainer 对象来调度各个插件。
+### 2、插件容器的流程以及和vite的关系
+插件顺序
+
+一个 Vite 插件可以额外指定一个 enforce 属性（类似于 webpack 加载器）来调整它的应用顺序。enforce 的值可以是 pre 或 post。解析后的插件将按照以下顺序排列：
+
+- Alias
+- 带有 enforce: 'pre' 的用户插件
+- Vite 核心插件
+- 没有 enforce 值的用户插件
+- Vite 构建用的插件
+- 带有 enforce: 'post' 的用户插件
+- Vite 后置构建插件（最小化，manifest，报告）
+
+相当数量的 Rollup 插件将直接作为 Vite 插件工作（例如：@rollup/plugin-alias 或 @rollup/plugin-json），但并不是所有的，因为有些插件钩子在非构建式的开发服务器上下文中没有意义。
+
+一般来说，只要 Rollup 插件符合以下标准，它就应该像 Vite 插件一样工作：
+
+没有使用 moduleParsed 钩子。
+它在打包钩子和输出钩子之间没有很强的耦合。
+如果一个 Rollup 插件只在构建阶段有意义，则在 build.rollupOptions.plugins 下指定即可。它的工作原理与 Vite 插件的 enforce: 'post' 和 apply: 'build' 相同。
+
+你也可以用 Vite 独有的属性来扩展现有的 Rollup 插件:
+
+```js
+import example from "rollup-plugin-example";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [
+    {
+      ...example(),
+      enforce: "post",
+      apply: "build",
+    },
+  ],
+});
+```
+
+从官网上获取的信息来看，我们的插件容器是和rollup高度一致的，我们先建立ts类型文件
+```ts
+// src/node/pluginContainer.ts
+import type {
+  LoadResult,
+  PartialResolvedId,
+  SourceDescription,
+  PluginContext as RollupPluginContext,
+  ResolvedId,
+} from "rollup";
+
+export interface PluginContainer {
+  resolveId(id: string, importer?: string): Promise<PartialResolvedId | null>;
+  load(id: string): Promise<LoadResult | null>;
+  transform(code: string, id: string): Promise<SourceDescription | null>;
+}
+
+```
+插件容器基本为rollup插件的封装，所以我们的类型也应该保持一致；
+来看看最核心的插件容器代码
+```ts
+export const createPluginContainer = (plugins: Plugin[]): PluginContainer => {
+  // 插件上下文对象
+  // @ts-ignore 这里仅实现上下文对象的 resolve 方法
+  class Context implements RollupPluginContext {
+    async resolve(id: string, importer?: string) {
+      let out = await pluginContainer.resolveId(id, importer);
+      if (typeof out === "string") out = { id: out };
+      return out as ResolvedId | null;
+    }
+  }
+  // 插件容器
+  const pluginContainer: PluginContainer = {
+    async resolveId(id: string, importer?: string) {
+      const ctx = new Context() as any;
+      for (const plugin of plugins) {
+        if (plugin.resolveId) {
+          const newId = await plugin.resolveId.call(ctx as any, id, importer);
+          if (newId) {
+            id = typeof newId === "string" ? newId : newId.id;
+            return { id };
+          }
+        }
+      }
+      return null;
+    },
+    async load(id) {
+      const ctx = new Context() as any;
+      for (const plugin of plugins) {
+        if (plugin.load) {
+          const result = await plugin.load.call(ctx, id);
+          if (result) {
+            return result;
+          }
+        }
+      }
+      return null;
+    },
+    async transform(code, id) {
+      const ctx = new Context() as any;
+      for (const plugin of plugins) {
+        if (plugin.transform) {
+          const result = await plugin.transform.call(ctx, code, id);
+          if (!result) continue;
+          if (typeof result === "string") {
+            code = result;
+          } else if (result.code) {
+            code = result.code;
+          }
+        }
+      }
+      return { code };
+    },
+  };
+
+  return pluginContainer;
+};
+
+```
+
+这个后续会添加到我们的koa中间件中，先来看看他的每个函数方法代表什么
+
+### 3、插件容器的方法解析
+
+**resolveId**
+
+我们来看我们`pluginContainer`第一个方法`resolveId`
+他做了什么事情呢，他会解析我们的路径，事实上，他的工作是帮我们筛选路径
+```js
+ async resolveId(id, importer) {
+      const ctx = new Context();
+      for (const plugin of plugins) {
+        if (plugin.resolveId) {
+          const newId = await plugin.resolveId.call(ctx, id, importer);
+          if (newId) {
+            id = typeof newId === 'string' ? newId : newId.id;
+            return newId;
+          }
+        }
+      }
+      return null
+    },
+
+```
+此方法会接受两个参数，一个是id，一个是importer，id是当前路径，importer的其入口文件
+```js
+//a.tsx
+import b from './b'
+```
+我们在读取`./b`的时候 ，id是b，importer是a.tsx;这个方法在后期的引入路径解析和模块依赖开发中十分有效；
+```ts
+  class Context implements RollupPluginContext {
+    async resolve(id: string, importer?: string) {
+      let out = await pluginContainer.resolveId(id, importer);
+      if (typeof out === "string") out = { id: out };
+      return out as ResolvedId | null;
+    }
+  }
+```
+我们会看到我们在方法执行的第一步，`const ctx = new Context();`这个方法会帮助我们创建一个上下文对象，他将我们的resolve插件方法，挂载到了`Context`上，这个方法继承于`RollupPluginContext`,我们后续可以使用`this`，在每一个插件中去调用路径处理方法；
+
+```ts
+for (const plugin of plugins) {
+        if (plugin.resolveId) {
+          const newId = await plugin.resolveId.call(ctx, id, importer);
+          if (newId) {
+            id = typeof newId === 'string' ? newId : newId.id;
+            return newId;
+          }
+        }
+      }
+```
+这里会遍历我们后续书写的插件，调用每一个插件上的`resolveId`方法，调用该方法时，其`this`会指向我们创建的`ctx`；如果我们能得到新的id返回值，如果存在。则会将其返回，不存在则返回null；
+
+**load**
+
+```ts
+    async load(id) {
+      const ctx = new Context();
+      for (const plugin of plugins) {
+        if (plugin.load) {
+          const res = await plugin.load.call(ctx, id);
+          if (res) {
+            return res
+          }
+        }
+      }
+      return null
+    },
+
+```
+我们`load`方法，实际上和上文的`resolve`方法时一致的，**这两个方法都会在有返回值的时候将循环中断**。我们的路径和对应的代码片段，应该时在找到时就返回了，而不是循环遍历完所有的插件；
+
+**transform**
+
+```ts
+ async transform(code, id) {
+      const ctx = new Context();
+      for (const plugin of plugins) {
+        if (plugin.transform) {
+          code = code.trim()
+          const res = await plugin.transform.call(ctx, code, id);
+          if (!res) {
+            continue
+          }
+          if (typeof res === 'string') {
+            code = res
+          } else {
+            code = res.code
+          }
+        }
+      }
+      return { code }
+    }
+```
+transform方法他会接受`load`的返回值`code`，和其处理的`id`；这里的处理和上文`resolve`和`load`不一致，他会在获取到值后持续循环，并不会退出，code每一次在循环中重新赋值，最后会返回所有transform处理后的code；
+
+下面开始会在处理流程上进行解析
+
+### 4、上下文环境
+```ts
+import { indexHtmlMiddware } from "./node/middlewares/indexHtml";
+import { transformMiddleware } from "./node/middlewares/transformMiddleware";
+const root = process.cwd();
+
+export interface ServerContext {
+  root: string;
+  PluginContainer: PluginContainer,
+  app: Koa;
+  plugins: Plugin[]
+
+}
+const plugins = resolvePlugins();
+const PluginContainer = createPluginContainer(plugins)
+const serverContext: ServerContext = {
+  root: process.cwd(),
+  PluginContainer,
+  app,
+  plugins: plugins
+}
+for (const plugin of plugins) {
+  if (plugin.configureServer) {
+    await plugin.configureServer(serverContext)
+  }
+}
+app.use(indexHtmlMiddware(serverContext));
+app.use(transformMiddleware(serverContext));
+```
+`resolvePlugins`这个方法返回的是一个插件数组，如`[resolvePath(),esbuildTransformPlugin(),importAnalysisPlugin()]`;我们的服务端上下文环境是一个对象，他包含根目录对象，插件容器，koa实例，以及插件数组，我们会将上下文环境分发给每一个中间件
+```ts
+for (const plugin of plugins) {
+  if (plugin.configureServer) {
+    await plugin.configureServer(serverContext)
+  }
+}
+```
+此处是将插件中，每一个`configureServer`钩子中，能获取到服务器环境的上下文环境，我们后续会用到；
+### 5、html文件的读取
+```ts
+import path from "path";
+import fs from "fs-extra";
+import { ServerContext } from "../../index";
+import { Middleware } from "koa";
+export function indexHtmlMiddware(serverContext: ServerContext): Middleware {
+  return async (ctx, next) => {
+    const { res, req } = ctx;
+  
+    if (req.url === "/") {
+      const { root } = serverContext;
+      const indexHtmlPath = path.resolve(root, "index.html");
+      if (await fs.pathExists(indexHtmlPath)) {
+        const readHtml = await fs.readFile(indexHtmlPath, "utf-8");
+        let html = readHtml;
+      
+        for (const plugin of serverContext.plugins) {
+          if (plugin.transformIndexHtml) {
+            html = await plugin.transformIndexHtml(html)
+          }
+        }
+
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "text/html");
+
+        ctx.body = html
+      }
+    }
+    return next();
+
+  }
+
+}
+```
+当我们的路径为`\`时，开始读取我们的`index.html`文件，如果存在，则读取文件内容，然后遍历我们的插件，如果存在`transformIndexHtml`方法，则调用该方法，将返回值赋值给html，最后将html返回给客户端；
+```ts
+       let html = readHtml;
+       for (const plugin of serverContext.plugins) {
+          if (plugin.transformIndexHtml) {
+            html = await plugin.transformIndexHtml(html)
+          }
+        }
+
+```
+此处的for循环会反复的遍历`transformIndexHtml`钩子，并对我们的`html`进行处理，每一次在插件循环中，只要我们的插件有对`html`处理的钩子，处理后就会对`html`重新赋值,最终将处理后的`html`返回给客户端；
+
+### 6、插件中间件
+```ts
+import { SourceDescription } from "rollup"
+import { Middleware } from "koa";
+import { ServerContext } from "../../index";
+import createDebug from "debug";
+import { isJSRequest, cleanUrl } from "../utils"
+const debug = createDebug("dev");
+
+//transformRequest .......
+
+//transformRequest
+export function transformMiddleware(serverContext: ServerContext): Middleware {
+  return async (ctx, next) => {
+    const { req, res } = ctx
+    if (req.method !== "GET" || !req.url) {
+      return next()
+    }
+    const url = req.url;
+    debug("transformMiddleware: %s", url);
+    if (isJSRequest(url)) {
+      let resCode = await transformRequest(url, serverContext);
+
+      if (!resCode) {
+        return next();
+      }
+
+      if (resCode && typeof resCode !== "string") {
+        resCode = resCode.code;
+      }
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/javascript");
+      return res.end(resCode);
+    }
+  }
+
+}
+```
+我们的`transformRequest`方法，他会在请求会js请求的时候进行处理，可以打开谷歌控制台，我们在network中可以找到`js`区块，这个请求主要是处理script标签的src和其中的import引入；都是我们的js请求，这里的会有一个正则进行校验`/\.(?:j|t)sx?$|\.mjs$/`;
+我们的插件容器，最后会返回一个js片段出来，这个片段则是我们给客户端的代码片段
+我们来看看`transformRequest`; 是怎么对插件进行处理的
+```ts
+async function transformRequest(url: string, serverContext: ServerContext): Promise<SourceDescription | null | string | undefined> {
+  const { PluginContainer } = serverContext;
+  url = cleanUrl(url);
+  let res;
+  let resolveId = await PluginContainer.resolveId(url);
+  if (resolveId?.id) {
+    let code = await PluginContainer.load(resolveId?.id);
+    if (typeof code === "object" && code !== null) {
+      code = code.code
+    }
+    if (code) {
+      res = await PluginContainer.transform(code, resolveId?.id);
+    }
+  }
+
+  return res
+}
+
+```
+我们可以看到具体的处理流程
+1. 使用`resolveId`方法先对路径进行处理，判断路径是否存在
+2. 如果路径存在，则通过`load`方法获取code，判断代码是否存在
+3. 如果代码存在吗，则对代码片段使用transform进行处理，这个处理于上文不同的是，他会将每一个`plugin`的`transform`钩子进行调用，拿到最终值
+
+### 7、插件
+```js
+// plugins/index.ts
+import { Plugin } from "./plugin";
+import { allin } from "./allin";
+import { resolvePath } from "./resolve";
+import { esbuildTransformPlugin } from "./esbuild";
+import { importAnalysisPlugin } from "./importAnalysis"
+export const resolvePlugins = (): Plugin[] => {
+  return [
+    // allin(),
+    resolvePath(),
+    esbuildTransformPlugin(),
+    importAnalysisPlugin()
+  ]
+}
+```
+这三个插件是vite的基石插件，我这边写了一个allin的插件，一个插件总和了其他插件的功能，可以在代码库中阅读该代码进一步理解
+#### 7-1、resolvePath插件
+
+```ts
+import { ServerContext } from './../../index';
+import resolve from "resolve";
+import { Plugin } from "./plugin";
+
+import path from "path";
+import fs, { pathExists } from "fs-extra";
+import { DEFAULT_EXTERSIONS } from "../contants";
+import { cleanUrl, normalizePath } from "../utils";
+export function resolvePath(): Plugin {
+  let serverContext: ServerContext
+  return {
+    name: "resolvePlugin",
+    configureServer(s) {
+      serverContext = s
+    },
+    async resolveId(id, importer) {
+      if (path.isAbsolute(id)) {
+        if (await pathExists(id)) {
+          return {
+            id
+          }
+        }
+        id = path.join(serverContext.root, id);
+        if (await pathExists(id)) {
+          return {
+            id
+          }
+        }
+      } else if (id.startsWith(".")) {
+        if (!importer) {
+          throw new Error("`importer` should not be undefined");
+        }
+        const hasExtension = path.extname(id).length > 1;
+        let resolvedId: string;
+      
+        if (hasExtension) {
+          //请于test中查看resolve.test.ts测试
+        
+          resolvedId = normalizePath(resolve.sync(id, { basedir: path.dirname(importer) }));
+          if (await pathExists(resolvedId)) {
+            return {
+              id: resolvedId,
+            }
+          }
+        } else {
+          
+          for (const extname of DEFAULT_EXTERSIONS) {
+            try {
+              const withExtension = `${id}${extname}`;
+           
+              resolvedId = normalizePath(resolve.sync(withExtension, {
+                basedir: path.dirname(importer),
+              }));
+            
+              if (await pathExists(resolvedId)) {
+            
+                return {
+                  id: resolvedId
+                }
+              }
+            } catch (error) {
+              continue
+            }
+          }
+        }
+      }
+      return null
+    },
+
+
+  }
+}
+
+```
+这个插件主要是对路径进行处理
+1. 第一个if是处理绝对路径，绝对路径找到后直接返回，如果没找到进一步拼接服务器地址再进行查找
+2. else if的处理主要是针对`./`相对路径的处理，处理后对其后缀名进行查验
+3. 如果存在存在文件拓展名，会使用resolve方法处理引入路径，通过相关关系获取到对应的文件路径
+4. 如果不存在拓展名，会去循环查找所有的拓展名，如果存在就返回对应的文件路径，否则返回null
+
+
+这里是一个测试代码，用于测试resolve方法
+以下是测试代码
+```ts
+import resolve from "resolve";
+import path from "path";
+
+test('resolveImporter', () => {
+  let id = "./App.tsx";
+  let importer = "src/client/main.tsx"
+  let res = resolve.sync(id, { basedir: path.dirname(importer) });
+  expect(res).toBe(`D:\code\study\vite\minivite\koaVite\src\client\App.tsx`);
+});
+```
+
+#### 7-2、esbuildTransformPlugin插件
+这个插件主要是用于帮助我们获取对应的`code`片段；
+```ts
+import { Plugin } from "./plugin";
+import { isJSRequest } from "../utils";
+import path from "path";
+import fs from "fs-extra";
+import esbuild from "esbuild";
+export function esbuildTransformPlugin(): Plugin {
+  return {
+    name: "esbuild-transform",
+    async load(id) {
+      if (isJSRequest(id)) {
+        try {
+          let code = await fs.readFile(id, "utf-8");
+          return code
+        } catch (error) {
+          return null
+        }
+      }
+    },
+    async transform(code, id) {
+      if (isJSRequest(id)) {
+        const extname = path.extname(id).slice(1);
+        const { code: resCode, map } = await esbuild.transform(code, {
+          target: "esnext",
+          format: "esm",
+          sourcemap: true,
+          loader: extname as "js" | "ts" | "jsx" | "tsx",
+        })
+        return {
+          code: resCode,
+          map
+        }
+      }
+      return null
+    }
+  }
+
+}
+
+```
+这个插件有两步，一是读取对应的`code`片段，二是对其`code`片段使用`esbuild`进行处理；
+
+1. load方法，通过`fs`读取对应的`code`片段，如果存在就返回，否则返回null
+2. transform方法，此处处理后返回值`code`会作为下一个钩子的参数进行处理
+3. 在transform的处理中，我们获取到对应的拓展名作为esbuild的loader参数
+4. 通过esbuild生成打包后的代码片段和源代码映射，返回给下一个钩子进行处理
+
+
+#### 7-3、importAnalysisPlugin插件
+```ts
+import { Plugin } from "./plugin";
+import {
+  BARE_IMPORT_RE,
+  DEFAULT_EXTERSIONS,
+  PRE_BUNDLE_DIR,
+} from "../contants";
+import { ServerContext } from "../../index";
+import { init, parse } from "es-module-lexer";
+import MagicString from "magic-string";
+import {
+  cleanUrl,
+  isJSRequest,
+  normalizePath
+} from "../utils";
+import path from "path";
+
+export function importAnalysisPlugin(): Plugin {
+  let serverContext: ServerContext;
+  return {
+    name: "m-vite:import-analysis",
+    configureServer(s) {
+      serverContext = s
+    },
+    async transform(code, id) {
+      const resolve = async (id: string, importer?: string) => {
+        let resolved = await serverContext.PluginContainer.resolveId(id, normalizePath(importer as string));
+
+        if (!resolved) {
+          return
+        }
+        const relPath = resolved.id.startsWith("/") ? resolved.id : normalizePath(
+          path.join('/', path.relative(serverContext.root, resolved.id))
+        );
+        return relPath
+      }
+      if (!isJSRequest(id)) {
+        return null
+      }
+      await init;
+      const [imports] = parse(code);
+      const ms = new MagicString(code);
+
+      for (const importInfo of imports) {
+        const { s: modStart, e: modEnd, n: modSource } = importInfo;
+        if (!modSource) continue;
+        if (BARE_IMPORT_RE.test(modSource as string)) {
+          const bundlePath = normalizePath(
+            path.join('/', PRE_BUNDLE_DIR, `${modSource}.js`)
+          );
+          ms.overwrite(modStart, modEnd, bundlePath as string)
+        } else if (modSource.startsWith(".") || modSource.startsWith("/")) {
+          const resolved = await resolve(modSource, id) as string;
+          if (resolved) {
+            ms.overwrite(modStart, modEnd, resolved)
+          }
+        }
+      }
+      return {
+        code: ms.toString(),
+        map: ms.generateMap()
+      }
+    }
+  }
+}
+
+```
+
+我们由main.tsx开始，来看看他是如何进行处理的
+- 解析出真实的路`D:\code\study\vite\minivite\koaVite\src\client\main.tsx`
+- 在上一个插件中读取代码，通过`esbuild`打包并返回
+- 首先通过`isJSRequest`判断是否是js请求，如果不是就直接返回null
+- 通过`init`初始化es-module-lexer，然后获取到对应的`imports`
+- `magic-string`环境搭建，方便后续处理
+- 处理`main.tsx`中的`import React from "react";import App from "./App"`进行处理，这是两种情况，一种为裸引入，一种为相对路径的处理
+- `react`是`bare`裸引入，满足`BARE_IMPORT_RE`条件，将其指向我们上文`PRE_BUNDLE_DIR`进行预构建的目录下也就是`/node_modules/.m-vite/react.js`
+- 处理完后，使用`magic-string`改写路径，将`import React from "react"`改写为`import React from "/node_modules/.m-vite/react.js";`
+- 如果是相对路径，则进入`resolve`方法进行处理
+- resolve方法会将路径改写为`import App from "/src/client/App.tsx";`
+- 通过不停的改写`import`路径，将每一个代码文件中的相对引入改写为绝对路径，便于我们的`node`服务器找到其真实存在的路径
+
+

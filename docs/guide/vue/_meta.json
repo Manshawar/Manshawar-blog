@@ -1,0 +1,10 @@
+[
+  "nuxt/nuxt.md",
+  "uniapp/uniapp.md",
+  {
+    "type": "dir",
+    "name": "other",
+    "label": "其他",
+    "collapsed": true
+  }
+]
