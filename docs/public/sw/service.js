@@ -2,7 +2,7 @@ if ("serviceWorker" in window.navigator) {
   const registerServiceWorker = async () => {
     if ("serviceWorker" in navigator) {
       try {
-        const registration = await navigator.serviceWorker.register("/sw/index.js", {
+        const registration = await navigator.serviceWorker.register("/Manshawar-blog/sw/index.js", {
           scope: "/sw/",
         });
         console.log(registration, "注册");
