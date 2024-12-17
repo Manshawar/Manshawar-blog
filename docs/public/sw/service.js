@@ -3,7 +3,7 @@ if ("serviceWorker" in window.navigator) {
     if ("serviceWorker" in navigator) {
       try {
         const registration = await navigator.serviceWorker.register("/Manshawar-blog/sw/index.js", {
-          scope: "/sw/",
+          scope: "/Manshawar-blog/sw/",
         });
         console.log(registration, "注册");
         if (registration.installing) {
