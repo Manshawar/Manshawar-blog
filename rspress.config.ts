@@ -13,13 +13,13 @@ export default defineConfig({
           tag: 'link',
           attrs: {
             rel: "manifest",
-            href: "/manifest.json"
+            href: "/Manshawar-blog/manifest.json"
           }
         },
         {
 
           tag: 'script',
-          attrs: { src: '/sw/service.js' },
+          attrs: { src: '/Manshawar-blog/sw/service.js' },
         },
 
       ] : []
