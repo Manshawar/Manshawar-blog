@@ -45,6 +45,6 @@ jobs:
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
-          github_token: ${{ secrets.yanghaoran }}
+          github_token: ${{ secrets.YANGHAORAN }}
           exclude_assets: ""
           publish_dir: doc_build
