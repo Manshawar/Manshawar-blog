@@ -17,8 +17,8 @@
   },
   {
     "type": "dir",
-    "name": "vite",
-    "label": "vite从入门到放弃"
+    "name": "project",
+    "label": "工程体系"
   },
   {
     "type": "dir",
