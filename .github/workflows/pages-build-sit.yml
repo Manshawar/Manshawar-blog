@@ -54,13 +54,10 @@ jobs:
           git config --global user.name "Manshawar"
           git config --global user.email "825750768@qq.com"
 
-          # 创建新分支
-          BRANCH_NAME="deployed-docs"
-          git checkout -b $BRANCH_NAME
-
-          # 添加和提交更改
+          git checkout --orphan doc_build
+          git rm -rf .
+          mv doc_build/* .
+          rm -rf doc_build
           git add .
-          git commit -m "Deploy docs to $BRANCH_NAME" || echo "No changes to commit"
-
-          # 推送新分支
-          git push origin $BRANCH_NAME
+          git commit -m "Generated documentation"
+          git push origin doc_build --force
