@@ -2,7 +2,7 @@ name: pages-build-site
 on:
   push:
     branches:
-      - main
+      - githubrealse
 jobs:
   deploy:
     runs-on: ubuntu-latest
