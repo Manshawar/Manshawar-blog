@@ -1,10 +1,10 @@
 {
   "name": "Manshawar的blog",
-  "start_url": "https://manshawar.github.io/Manshawar-blog/index.html",
+  "start_url": "https://spontaneous-tarsier-4315a8.netlify.app/",
   "display": "standalone",
   "icons": [
     {
-      "src": "/Manshawar-blog/rspress-icon.png",
+      "src": "/rspress-icon.png",
       "type": "image/png",
       "sizes": "512x512"
     }
