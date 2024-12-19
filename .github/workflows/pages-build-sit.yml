@@ -49,7 +49,7 @@ jobs:
       - name: Remove all files except doc_build
         run: |
           # 删除除了 doc_build 文件夹之外的所有文件和文件夹
-          rm -rf $(ls -A | grep -v doc_build)
+          rm -rf $(ls -A | grep -vE 'doc_build|.git')
 
       - name: Move doc_build contents to root and remove doc_build folder
         run: |
