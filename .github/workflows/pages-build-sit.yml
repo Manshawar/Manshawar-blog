@@ -58,10 +58,6 @@ jobs:
           BRANCH_NAME="deployed-docs"
           git checkout -b $BRANCH_NAME
 
-          # 删除所有文件，只保留 doc_build 的内容
-          rm -rf ./*
-          cp -r ./doc_build/* .
-
           # 添加和提交更改
           git add .
           git commit -m "Deploy docs to $BRANCH_NAME" || echo "No changes to commit"
