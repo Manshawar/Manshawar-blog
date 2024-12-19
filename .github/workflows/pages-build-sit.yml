@@ -55,15 +55,12 @@ jobs:
           git config --global user.email "825750768@qq.com"
 
           # 创建新分支
-          BRANCH_NAME="static"
+          BRANCH_NAME="deployed-docs"
           git checkout -b $BRANCH_NAME
 
-          # 复制构建结果到指定目录
-            if [ -d "./doc_build" ]; then
-            cp -r ./doc_build/* .
-          else
-            echo "Warning: doc_build directory does not exist."
-          fi
+          # 删除所有文件，只保留 doc_build 的内容
+          rm -rf ./*
+          cp -r ./doc_build/* .
 
           # 添加和提交更改
           git add .
