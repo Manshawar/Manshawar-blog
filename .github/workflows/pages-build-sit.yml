@@ -59,8 +59,11 @@ jobs:
           git checkout -b $BRANCH_NAME
 
           # 复制构建结果到指定目录
-          mkdir -p doc_build
-          cp -r ./dist/* ./doc_build/
+            if [ -d "./doc_build" ]; then
+            cp -r ./doc_build/* .
+          else
+            echo "Warning: doc_build directory does not exist."
+          fi
 
           # 添加和提交更改
           git add .
