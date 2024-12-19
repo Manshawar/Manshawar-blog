@@ -59,7 +59,7 @@ jobs:
           git checkout -b $BRANCH_NAME
 
           # 添加和提交更改
-          git add ./doc_build
+          git add .
           git commit -m "Deploy docs to $BRANCH_NAME" || echo "No changes to commit"
 
           # 推送新分支
