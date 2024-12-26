@@ -1,7 +1,17 @@
 [
   {
     "type": "dir",
-    "name": "vite",
-    "label": "vite"
+    "name": "从零开始搭建vite",
+    "label": "从零开始搭建vite"
+  },
+  {
+    "type": "dir",
+    "name": "vite工程化",
+    "label": "vite工程化"
+  },
+  {
+    "type": "dir",
+    "name": "turbo",
+    "label": "Monorepo多项目体系和turbo"
   }
 ]

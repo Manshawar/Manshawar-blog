@@ -1,0 +1,159 @@
+# Turbo和monorepo
+
+我们先来看看单一代码库monorepo和多代码仓库（multirepos）有什么区别
+
+
+多代码仓库（multirepos）:每个项目存储在一个完全独立的、版本控制的代码库中。是我目前遇到项目普遍使用的一种方式。例如每个项目的web端是一个代码仓库、H5是另一个。
+
+Monorepo 是指在一个 git 仓库下管理多个项目的代码。这些项目可能是相关的，但通常在逻辑上是独立的，可以由不同的团队维护。比如 <a href="https://github.com/vuejs/devtools">vue devtools</a>;这种项目常依托于npm或者pnpm提供的`workspace`方案；通过`workspace`方案，对项目进行多个分包
+
+<img src="https://turbo.build/_next/image?url=%2F_next%2Fstatic%2Fmedia%2Fpackage-graph.3b11ffd3.png&w=828&q=75&dpl=dpl_Bop6cDpFyhYDskUdvBvkzjLN8JGg" />
+
+我们可以通过设置工作区，在不同的项目中共享一个项目的作为依赖，同时我们管理多个项目也会变得更加容易
+
+## 我们为什么要使用monorepo？
+
+1. 我们开发组件或者组件库的时候，我们希望对于组件库的代码，实时的对代码进行修改，观察其结果
+2. 同一个项目分为多个端，但其中的代码又可以大量的复用
+3. 为微前端代码代码的维护提供便利
+
+## turbo创建monorepo                                         
+
+<a href="https://turbo.build/repo/docs"> turbo是什么？</a>
+
+具有缓存机制、任务并行执行优化。他能帮我们方便的创建`monorepo`仓库，且能帮我们快速构建`monorepo`项目,内部提供丰富的管理打包方法。
+
+- 全局安装turbo
+
+```bash
+npm install turbo -g
+```
+
+- 创建项目
+
+我们使用`with-vite`的模板，他创建的是一个原生的vite项目
+
+```bash
+npx create-turbo@latest --example with-vite
+```
+
+我们使用`pnpm`作为包管理工具,他便于我们使用`monorepo`的目录结构
+
+<img src="/monorepo/steps1.png" />
+
+
+我们的文件就初始好了
+
+
+<img src="/monorepo/setps2.png" />
+
+这里是简化的目录结构
+```md
+|-- try
+    |-- .eslintrc.js
+    |-- .gitignore
+    |-- .npmrc
+    |-- package.json
+    |-- pnpm-lock.yaml
+    |-- pnpm-workspace.yaml
+    |-- README.md
+    |-- turbo.json
+    |-- .vscode
+    |   |-- settings.json
+    |-- apps
+    |   |-- docs
+    |   |   |-- package.json
+    |   |-- web
+    |       |-- package.json
+    |-- packages
+        |-- eslint-config
+        |   |-- package.json
+        |-- typescript-config
+        |   |-- package.json
+        |-- ui
+            |-- 
+       
+```
+
+## 编辑pnpm-workspace.yaml工作区文件
+
+*pnpm-workspace.yaml*这个文件是我们`monorepo`文件的根本，我们需要来确定我们的工作区，我们的工作区的包可以独立安装也可以互相引用，我们来看看*pnpm-workspace.yaml*的内容
+
+```yaml
+packages:
+  - 'apps/*'
+  - 'packages/*'
+```
+
+这里代表我们的`apps`和`packages`目录下的所有文件都是工作区，`*`是通配符的意思，代表我们`app`和`packages`目录下的所有文件都是工作区
+
+## 启动项目文件
+```bash
+pnpm run dev
+```
+这个命令会执行`turbo dev`命令，这个命令会启动所有工作区的项目
+```json
+   "dev": "turbo dev",
+```
+但我们希望不启动全部命令可以使用`turbo dev --filter=[package.json的name]` 通过`--filter`参数来指定我们想要启动的工作区项目，注意这里的--filter参数后面是包名不是文件名
+
+这里我们启动的是工作区模板，如果我们添加新的项目该怎么做呢？
+
+## 新增项目
+
+这里添加我的`blog`项目
+
+```bash
+cd apps
+git clone https://github.com/Manshawar/Manshawar-blog.git
+```
+我们安装包;
+
+```bash
+pnpm install
+```
+不过我们再学习pnpm的时候 发现了可以使用`--filter [package的name]`来调用本地的包进行安装
+
+```bash
+pnpm install --filter=[package的name]
+```
+用工作区安装包，pnpm会直接调用本地缓存安包的速度非常的快
+
+```bash
+turbo dev --filter blog
+```
+我们可以使用turbo启动项目，由于`turbo`的缓存机制 打开项目的速度会肉眼可见的变快
+
+
+## 添加本地包进行依赖
+
+我们要注意到`.npmrc`文件，在`pnpm>9`版本后，由于默认的`link-workspace-packages`被改为了`false`，他会优先从`镜像`中拉取包，我们无法安装工作区的本地包，我们需要在`.npmrc`文件中新增下面这一行文本,它会优先从本地拉去包
+
+这里时issue地址<a href="https://github.com/pnpm/pnpm/issues/7954">https://github.com/pnpm/pnpm/issues/7954</a>
+```yaml
+link-workspace-packages = true
+```
+*注意,如果安装不了，可以尝试新开一个终端*
+
+我们再使用`pnpm install`命令安装本地依赖
+
+```bash
+pnpm instal @repo/eslint-config --filter blog
+```
+
+接下来你会在工作区中看到`workspace`工作区依赖包
+
+<img src="/monorepo/package1.png" />
+
+
+- workspace:*: 匹配所有版本的工作区包。这意味着无论版本号是什么，都将使用当前 monorepo 中对应名称的工作区包。
+- workspace:~: 使用波浪号（~），它通常表示“与指定版本兼容的小版本更新”。对于 workspace:~ 来说，它会匹配相同主要和次要版本但补丁版本可以不同的工作区包。例如，如果工作区包的最新版本是 1.5.3，那么 workspace:~ 将会匹配到这个版本，因为它允许补丁级别的变化。
+- workspace:^: 插入符号（^）意味着“与指定版本兼容的主要版本”。这允许次要版本和补丁版本的变化，只要主要版本号保持不变。例如，workspace:^1.5.0 将会匹配 1.x.x 系列中的任何版本，但不会匹配 2.0.0 或更高版本，因为那会被认为是一个不向后兼容的更改。
+
+我们可以编辑`.npmrc`来控制其版本，这里我们设置为`workspace:*`
+```yaml
+save-prefix = ''
+```
+这里是相关链接<a href="https://pnpm.io/npmrc#save-prefix">https://pnpm.io/npmrc#save-prefix</a>
+
+现在你可以开始你的monorepo项目了，打包详细参考turbo官网
