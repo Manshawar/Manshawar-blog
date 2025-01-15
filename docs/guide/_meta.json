@@ -22,6 +22,11 @@
   },
   {
     "type": "dir",
+    "name": "3d",
+    "label": "可视化"
+  },
+  {
+    "type": "dir",
     "name": "rust",
     "label": "rust狗都不用",
     "collapsible": "true"

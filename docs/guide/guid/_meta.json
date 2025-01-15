@@ -1,0 +1,12 @@
+[
+  {
+    "type": "dir",
+    "name": "tool",
+    "label": "工具"
+  },
+  {
+    "type": "dir",
+    "name": "html",
+    "label": "html"
+  }
+]
