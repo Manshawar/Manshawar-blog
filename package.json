@@ -8,14 +8,17 @@
     "preview": "rspress preview"
   },
   "dependencies": {
+    "antd": "^5.23.1",
     "next-workbox-webpack-plugin": "^2.1.1",
     "oh-my-live2d": "^0.19.3",
-    "rspress": "^1.37.0"
+    "rspress": "^1.37.0",
+    "styled-components": "^6.1.14"
   },
   "devDependencies": {
     "@types/node": "^18.11.17",
     "@types/react": "^18.3.12",
     "html-webpack-plugin": "^5.6.3",
+    "tailwindcss": "^3.4.17",
     "webpack-pwa-manifest": "^4.3.0",
     "workbox-webpack-plugin": "^7.3.0"
   }

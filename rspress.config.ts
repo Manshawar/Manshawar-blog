@@ -6,8 +6,23 @@ export default defineConfig({
   title: 'Manshawar blog',
   icon: '/rspress-icon.png',
   builderConfig: {
+    //@ts-ignore
+    resolve: {
+      alias: {
+        '@com': './src/components/',
+        '@page': './src/page/',
+        '@': './src/',
+      },
+    },
     html: {
       tags: env.NODE_ENV !== 'development' ? [
+
+        {
+          tag: 'script',
+          // 通过 window.RSPRESS_THEME 变量来指定默认的主题模式，可选值为 'dark' 和 'light'
+          children: "window.RSPRESS_THEME = 'dark';",
+        },
+
         {
           tag: 'link',
           attrs: {
@@ -23,8 +38,8 @@ export default defineConfig({
 
       ] : []
     },
-
   },
+
   logo: {
     light: '/rspress-light-logo.png',
     dark: '/rspress-dark-logo.png',
@@ -32,6 +47,7 @@ export default defineConfig({
 
 
   plugins: [
+
     {
       name: "Live2DWidget",
       globalUIComponents: [

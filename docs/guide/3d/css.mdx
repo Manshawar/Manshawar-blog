@@ -1,0 +1,38 @@
+
+import Css3d from "@page/css3d/index"
+
+# css的高级技巧
+
+## Transform 字体模糊问题
+transform2D 我们一般用于 2D 场景的变换，transform3D 用于 3D 场景的变换，但是在一些特殊场景 transform2D 会字体模糊问题，比如使用transform: translate(-50%, -50%)。
+
+导致字体模糊的原因是：这个变换会触发浏览器对元素进行硬件加速。在某些浏览器中，硬件加速可能会导致更简化的文本渲染方法，从而出现字体模糊的情况。
+
+解决这个问题的方法之一是使用 transform: translate3d(-50%, -50%, 0)，将元素的变换转换为 3D 变换。这样可以强制浏览器使用更高质量的文本渲染，从而避免字体模糊的问题。
+
+另外，还可以尝试使用 backface-visibility: hidden 属性，将元素的背面隐藏起来，这有助于提高字体的清晰度。
+
+## matrix3d
+可以发现，matrix3d() API 中，有16个参数，但是他的参数的顺序和我们上面给出的顺序并不相同，上面给出的是数学中的矩阵的正常格式：
+
+行（row）是横向的，列（column）是纵先的。但是Web当中矩阵是刚好相反，即列是横向的，行是纵向的。类似下面这样：
+
+      <img
+        src="https://i-blog.csdnimg.cn/blog_migrate/81f887f9443d7a238c906238650545d9.png#pic_center"
+        alt="在这里插入图片描述"
+        referrerPolicy="no-referrer"
+      />
+
+
+所以大家应该注意，前文所有的推导结果，放到matrix3d中，顺序应该是下面这样：
+matrix3d(,a00,a10,a20,a30,a01,a11,a21,a31,a02,a12,a22,a32,a03,a13,a23,a33)。
+
+
+      <img
+        src="https://i-blog.csdnimg.cn/blog_migrate/f0ac87c4896267ff2fa0e004bd62b15b.png#pic_centernpm install antd --save"
+        alt="在这里插入图片描述"
+        referrerPolicy="no-referrer"
+      />
+
+<a href="https://blog.csdn.net/qq_35543489/article/details/113694496" target="_blank">矩阵详解</a>
+<Css3d />

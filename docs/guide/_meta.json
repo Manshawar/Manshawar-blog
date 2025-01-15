@@ -22,6 +22,11 @@
   },
   {
     "type": "dir",
+    "name": "3d",
+    "label": "可视化"
+  },
+  {
+    "type": "dir",
     "name": "rust",
     "label": "rust狗都不用",
     "collapsible": "true"
@@ -63,6 +68,12 @@
     "type": "dir",
     "name": "css",
     "label": "css切图仔来啦",
+    "collapsible": "true"
+  },
+  {
+    "type": "dir",
+    "name": "guid",
+    "label": "前端之路",
     "collapsible": "true"
   },
   {
