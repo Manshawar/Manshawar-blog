@@ -66,6 +66,12 @@
     "collapsible": "true"
   },
   {
+    "type": "dir",
+    "name": "guid",
+    "label": "前端之路",
+    "collapsible": "true"
+  },
+  {
     "type": "section-header",
     "label": "会server的能去贴膜了"
   },
