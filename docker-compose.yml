@@ -1,0 +1,30 @@
+networks:
+  frontend:
+    external: true
+
+services: # 容器
+  docker_jenkins:
+    user: root # root权限
+    restart: always # 重启方式
+    image: jenkins/jenkins:lts # 使用的镜像
+    container_name: jenkins # 容器名称
+    #    environment:
+    #      - TZ=Asia/Shanghai
+    #      - "JENKINS_OPTS=--prefix=/jenkins_home" ## 自定义 jenkins 访问前缀（上下文context）
+
+    ports: # 对外暴露的端口定义
+      - 8080:8080
+
+    volumes: # 卷挂载路径
+      - /docker/jenkins_home/:/var/jenkins_home # 挂载到容器内的jenkins_home目录
+      - /usr/local/bin/docker-compose:/usr/local/bin/docker-compose
+      - ./doc_build:/usr/share/nginx/html
+  docker_nginx: # nginx-dev环境
+    restart: always
+    image: nginx
+    container_name: nginx
+    ports:
+      - 8000:8000
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./doc_build:/usr/share/nginx/html
