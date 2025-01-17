@@ -80,5 +80,10 @@
     "type": "section-header",
     "label": "会server的能去贴膜了"
   },
+  {
+    "type": "dir",
+    "name": "日常笔记",
+    "label": "日常笔记"
+  },
   "serve/sql/sql.md"
 ]
